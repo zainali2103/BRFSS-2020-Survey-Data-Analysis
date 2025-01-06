@@ -18,7 +18,8 @@ This repository contains the analysis of the **BRFSS 2020 Survey Data**, a compr
 
 ## Files:
 - **BRFSS_2020_Analysis.R**: R script for data cleaning, analysis, and statistical testing.
-- **BRFSS_2020_Results.xlsx**: Excel file with additional analysis, charts, and summary tables.
+- **You can download the BRFSS 2020 dataset from here [https://drive.google.com/drive/folders/1_DQcPpQJJwlNXpXmcvMv1t0-urIq6Xbo).
+
 - **README.md**: This file describing the project and its contents.
 
 ## How to Use:
