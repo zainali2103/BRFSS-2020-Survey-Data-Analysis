@@ -1,0 +1,1055 @@
+---
+title: "Group E - BRFSS Analysis"
+author: "Ilsa Qadri"
+date: '2022-09-20'
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(srvyr)
+library(survey)
+library(haven)
+library(pander)
+library(colorspace)
+library(magrittr)
+library(plyr)
+```
+
+
+```{r}
+brfss2020=read.csv("brfss2020.csv", TRUE, ",")
+```
+
+# Subsetting data for NewYork state
+```{r}
+NewYork <- filter(brfss2020, X_STATE == 36)
+```
+
+
+                                           ***Exploratory Data Analysis***
+   
+# Relationship between Income level and Health condition 
+```{r}
+NewYork$INCOME2 = as.factor(dplyr::recode(NewYork$INCOME2, "1" = "Less than $10,000" ,
+                                                           "2" = "Less than $15,000" ,
+                                                           "3" = "Less than $20,000" ,
+                                                           "4" = "Less than $25,000" ,
+                                                           "5" = "Less than $35,000" ,
+                                                           "6" = "Less than $50,000" ,
+                                                           "7" = "Less than $75,000" ,
+                                                           "8" = "More than $75,000 " , .default = NULL, .missing = NULL)) 
+
+plot_data <- NewYork %>%
+  dplyr::select(INCOME2, POORHLTH) %>% #Select the columns
+  dplyr::filter(!is.na(INCOME2) &
+                POORHLTH != 88 & POORHLTH != 77 & POORHLTH != 99 & !is.na(POORHLTH) ) %>% #Filter non-null values
+  dplyr::mutate(healthy_days = 30 - POORHLTH,
+                INCOME2 = gsub("Less than", "<", INCOME2)) %>%
+  dplyr::group_by(INCOME2) %>%
+  dplyr::summarize(healthy_days_avg = mean(healthy_days))
+
+#Create geom point
+plot_data %>%
+  ggplot2::ggplot(aes(fct_reorder(INCOME2,healthy_days_avg), y = healthy_days_avg)) +
+  ggplot2::geom_point() +
+  geom_line() +
+ 
+    ggplot2::scale_y_continuous(breaks = seq(0, 30, 2)) +
+    
+    # Create chart info
+    ggplot2::labs(
+      title = "Income Level vs Health Condition (Past 30 Days)",
+      x = element_blank(),
+      y = "Number of Healthy Days"
+    )
+```
+Healthcare is a major public policy issue in the United States and the concern is who needs help with medical expenses and why, and whether having health insurance makes a difference in handling medical costs.
+
+#Are a having a lower reported income and whether one has health insurance associated with a difficulty in affording to see a doctor?
+
+Variables: 
+* income2 (Income Level), 
+*hlthpln1 (Have any Health Care Coverage), 
+*and medcost (Could Not See Dr. Because Of Cost)
+
+```{r}
+
+data <- NewYork %>%
+  select(HLTHPLN1, MEDCOST , INCOME2) %>%
+  mutate(HealthCareCoverage = as.factor(dplyr::recode(HLTHPLN1, "1" = "Yes" ,
+                                                                "2" = "No", .default = '0', .missing = '0')),
+         IncomeLevel = INCOME2,
+         AffordMedCost = as.factor(dplyr::recode(MEDCOST, "1" = "No" ,
+                                                          "2" = "Yes", .default = '0', .missing = '0'))) %>%
+  filter(HealthCareCoverage != 0, IncomeLevel != 0, AffordMedCost != 0)
+```
+
+```{r}
+
+data <- data %>%
+  select(HealthCareCoverage, AffordMedCost, IncomeLevel)
+
+pandoc.table(head(data), caption = "Observations 1 to 6 of 11,219 form dataframe `data`", justify = "center")
+
+summary <- data %>% 
+    group_by( IncomeLevel, AffordMedCost) %>% 
+    dplyr::summarize(Sum = n()) %>% 
+    spread(AffordMedCost, Sum) %>% 
+    mutate(Total = Yes+No, `% No` = round(No/Total*100, digits =1))
+colnames(summary)[1] <- "Income Level"
+pandoc.table(summary, caption = "Summary Statistics for If Respondent Could Afford to See Dr. Because Of Cost Grouped by Income Level", justify = "center")
+```
+
+```{r}
+
+sum_ins <- data %>% 
+    filter(HealthCareCoverage == "Yes") %>%
+    group_by(IncomeLevel, AffordMedCost) %>% 
+    dplyr::summarize(Sum = n()) %>% 
+    spread(AffordMedCost, Sum) %>% 
+    mutate(count = Yes+No, `% No` = round(No/count*100, digits =1))
+colnames(sum_ins)[1] <- "Income Level"
+
+pandoc.table(sum_ins, caption = "Have Health Coverage Only - Summary Statistics for If Respondent Could Afford to See Dr. Because Of Cost Grouped by Income Level", justify = "center")
+```
+
+```{r}
+
+sum_no_ins <- data %>% 
+    filter(HealthCareCoverage == "No") %>%
+    group_by(IncomeLevel, AffordMedCost) %>% 
+    dplyr::summarize(Sum = n()) %>% 
+    spread(AffordMedCost, Sum) %>% 
+    mutate(count = Yes+No, `% No` = round(No/count*100, digits =1))
+colnames(sum_no_ins)[1] <- "Income Level"
+
+pandoc.table(sum_no_ins, caption = "Do Not Have Health Coverage Only - Summary Statistics for If Respondent Could Afford to See Dr. Because Of Cost Grouped by Income Level", justify = "center")
+```
+
+```{r}
+colnames(data)[1] <- "Coverage?"
+ggplot(data, aes(x= IncomeLevel, y = 1, fill = AffordMedCost)) + 
+    geom_bar(stat="identity", position = "fill") + 
+    facet_grid(`Coverage?`~., labeller = label_both) + 
+    scale_fill_manual(values = c("#002D70", "#F66E1A", "#F66E1A", "#F66E1A", "#F66E1A")) +
+    scale_y_continuous(labels = c("0%", "25%", "50%", "75%", "100%")) +
+    labs(title = "Proportion of Respondents Who Could Afford to See Doctor by \n Income Category and Whether They Have Any Health Care Coverage", fill = "Could Afford Dr.?",x = "Respondent's Income Category", y = "% Respondents who Could Afford to See Doctor") +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1), plot.title = element_text(hjust = 0.5))
+
+
+```
+By plotting the proportion that could afford to see the doctor and faceting by whether the respondent has health coverage, 
+the assocaition between income and whether the respondent could afford to see the doctor is illustrated.
+Lower income respondents proportionally struggle more to afford to see a doctor compared to higher income respondents. 
+In addition, the association between having health care coverage and whether one could afford to see the doctor is also shown. 
+Having health insurance is associated with a higher proportion of respondents who could afford to see the doctor for every income group.
+
+*Conclusion from the Exploratory Analysis:* 
+Yes, having a lower income is associated with an inability to afford to see the doctor. 
+Having health insurance is associated with being better able to afford to see the doctor, 
+so, for instance, being poor and not having health insurance is associated with a much greater difficulty in affording health care.
+
+
+
+The National Sleep Foundation recommends 7-9 hours of sleep for adults aged between 18-64.
+sleep duration is an important factor to consider in addressing problems of public health, organizational productivity, and personal well being. Therefore, it’s important to know whether observational data support these claims.
+
+```{r}
+data <- NewYork %>%
+  select(GENHLTH, POORHLTH, SLEPTIM1, DECIDE, EXERANY2, ASTHNOW) %>% 
+    filter(SLEPTIM1 <= 24 & SLEPTIM1 >= 1 & !is.na(SLEPTIM1) & 
+             (EXERANY2 == 1 | EXERANY2 ==2) & !is.na(EXERANY2) & 
+             POORHLTH <= 30 & 
+             !is.na(POORHLTH) & 
+             !is.na(DECIDE)
+              ) %>%
+  
+    mutate(Sleep_time = ifelse(SLEPTIM1 < 5, "0-5", 
+                               ifelse(SLEPTIM1 >= 5 & SLEPTIM1 < 7, "5-7", 
+                               ifelse(SLEPTIM1 >= 7 & SLEPTIM1 < 9, "7-9",
+                               "9 or more"))),
+           Health_status = as.factor(dplyr::recode(GENHLTH, "1" = "Excellent" , 
+                                                            "2" = "Very good", 
+                                                            "3" = "Good" , 
+                                                            "4" = "Fair", 
+                                                            "5" = "Poor", .default = '0', .missing = '0')),
+           
+           Exercise = as.factor(dplyr::recode(EXERANY2, "1" = "Yes" ,
+                                                        "2" = "No", .default = '0', .missing = '0')),
+           Diff_rmbrng = as.factor(dplyr::recode(DECIDE, "1" = "Yes" ,
+                                                         "2" = "No", .default = '0', .missing = '0')),
+           )
+
+```
+
+
+ 
+#Sleep Time vs Poor Physical/Mental Health Condition (Past 30 Days)
+```{r}
+data1 <- data %>%
+  select(Sleep_time, POORHLTH, Health_status) 
+
+data1 %>%
+  group_by(Sleep_time) %>%
+  dplyr::summarize(medianpoordays = median(POORHLTH), iqrpoordays = IQR(POORHLTH, na.rm = TRUE), meanpoordays = mean(POORHLTH), count=n())
+
+ggplot(data1, aes(x = Sleep_time, y = POORHLTH)) + 
+  geom_boxplot(aes(color = Sleep_time, fill = Sleep_time))+
+
+# Create crossbar on median
+  ggplot2::stat_summary(
+    geom = "crossbar",
+    width = 0.6,
+    fatten = 0,
+    color = "white",
+    fun.data = function(x) {
+      c(y = median(x),
+        ymin = median(x),
+        ymax = median(x))
+    }
+  ) +
+  
+# Set y-axis scale
+  ggplot2::scale_y_continuous(breaks = seq(0, 30, 2)) +
+  
+  # To set boxplot color palette
+  ggplot2::scale_fill_brewer(palette = "Dark2") +
+  ggplot2::scale_color_brewer(palette = "Dark2") +
+ # Create chart info
+  ggplot2::labs(
+    title = "Sleep Time vs Poor Physical/Mental Health Condition (Past 30 Days)",
+    caption = "Sleep Time vs Poor Physical/Mental Health Condition (Past 30 Days)",
+    x = element_blank(),
+    y = "Number of Poor Health Days"
+  ) +
+  
+  # Set plot format
+  ggplot2::theme_minimal(base_family = "Helvetica") +
+  ggplot2::theme(
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, unit = "cm"),
+    plot.title = element_text(
+      size = 15,
+      face = "bold",
+      margin = margin(b = 1, unit = "cm")
+    ),
+    axis.text.x = element_text(margin = margin(b = 0.5, unit = "cm")),
+    axis.title.y = element_text(size = 10, margin = margin(r = 0.5, unit = "cm")),
+    legend.position = "none"
+  )
+  
+
+```
+Is there a relationship between the duration of sleep and physical or mental health among those who are generally healthy and exercise?
+```{r}
+
+data %>%
+  filter(Health_status == "Excellent" | Health_status == "Very good" | Health_status == "Good" & Exercise == "Yes") %>%
+  group_by(Sleep_time) %>%
+  dplyr::summarise(medianpoordays = median(POORHLTH), iqrpoordays = IQR(POORHLTH, na.rm = TRUE), meanpoordays = mean(POORHLTH), count=n())
+
+data %>%
+    filter(Health_status == "Excellent" | Health_status == "Very good" | Health_status == "Good" & Exercise == "Yes") %>%
+  ggplot(aes(x = Sleep_time, y = POORHLTH)) + 
+  geom_boxplot(aes(color = Sleep_time, fill = Sleep_time)) +
+
+
+# Create crossbar on median
+  ggplot2::stat_summary(
+    geom = "crossbar",
+    width = 0.6,
+    fatten = 0,
+    color = "white",
+    fun.data = function(x) {
+      c(y = median(x),
+        ymin = median(x),
+        ymax = median(x))
+    }
+  ) +
+  
+# Set y-axis scale
+  ggplot2::scale_y_continuous(breaks = seq(0, 30, 2)) +
+  
+  # To set boxplot color palette
+  ggplot2::scale_fill_brewer(palette = "Dark2") +
+  ggplot2::scale_color_brewer(palette = "Dark2") +
+ # Create chart info
+  ggplot2::labs(
+    title = "Sleep Time vs Poor Physical/Mental Health Condition (Past 30 Days)",
+    caption = "Sleep Time vs Poor Physical/Mental Health Condition (Past 30 Days)",
+    x = element_blank(),
+    y = "Number of Poor Health Days"
+  ) +
+  
+  # Set plot format
+  ggplot2::theme_minimal(base_family = "Helvetica") +
+  ggplot2::theme(
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, unit = "cm"),
+    plot.title = element_text(
+      size = 15,
+      face = "bold",
+      margin = margin(b = 1, unit = "cm")
+    ),
+    axis.text.x = element_text(margin = margin(b = 0.5, unit = "cm")),
+    axis.title.y = element_text(size = 10, margin = margin(r = 0.5, unit = "cm")),
+    legend.position = "none"
+  )
+ 
+
+
+```
+Do healthy adults who exercise but sleep less than 7 or more than 9 hours a day tend to have difficulty concentrating, remembering, or making decisions more frequently compared to individuals who sleep 7 to 9 hours on average?
+#The relationship between the amount of sleep and difficulty concentrating, remembering, or making decisions
+```{r}
+data2 <- data %>%
+    filter(Diff_rmbrng != 0 & (Health_status == "Excellent" | Health_status == "Very good" | Health_status == "Good" & Exercise == "Yes"))
+
+stats <- data2 %>%
+  group_by(Sleep_time) %>%
+  dplyr::summarise(n.Count=n(),HaveDifficultyProportion=sum(Diff_rmbrng == "Yes")/n())
+stats
+
+data2 %>% 
+    filter(Health_status == "Excellent" | Health_status == "Very good" | Health_status == "Good" & Exercise == "Yes")%>%
+  ggplot(aes(x = Sleep_time, y = 1, fill = Diff_rmbrng)) + 
+  geom_bar( stat="identity", position="fill") + 
+  labs(y = "Proportion") +
+  scale_fill_manual(values = c("#002D70", "#F66E1A", "#F66E1A", "#F66E1A", "#F66E1A")) +
+  scale_y_continuous(labels = c("0%", "25%", "50%", "75%", "100%")) +
+  labs(title = "Do healthy adults who exercise but sleep less than 7 or more than 9 hours a day \n tend to have difficulty concentrating, remembering, or making decisions \n more frequently than individuals who sleep 7 to 9 hours on average? ", fill = "Difficulty?",x = "Sleep Duration", y = "% Respondents who have difficulty") +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1), plot.title = element_text(hjust = 0.5))
+
+
+
+#The said differences can be clearly seen in the following relative frequency barplot where the size of the orange areas represent the proportions of those who have difficulty concentrating, remebering, and making decisions:
+```
+CONCLUSION: The results show that 
+* 37.3% percent of those generally healthy adults in the sample who sleep less than 5 hours, 
+* 18.9% percent of those who sleep more than 9 hours,
+* 18.5% percent of those who sleep 5-7 hours, 
+* only 10.2% percent of those who get 7-9 hours of sleep have difficulty concentrating, remembering, or making decisions. 
+
+Among the generally healthy individuals in this sample, those who sleep the recommended 7-9 hour are least likely to experience serious difficulty concentrating, remembering, or making decisions compared to those adults who, on average, sleep more or less than that.
+
+In this sample the duration of sleep is related to the ability to concentrate, remember, or make decisions among adults whose general health is at least good and who exercise. 
+In this sample, individuals who get 7-9 hour of sleep perform the best on this measure. 
+Adults who sleep less than 5 hours or more than 9 hours are most likely to have serious difficulty concentrating, remembering, or making decisions. 
+Even those who sleep 5-7 hours on average, are more likely to have such a difficulty compared to those who sleep the recommended 7-9 hours.
+
+
+
+                                           ***Prevelence Estimate for Arthritis in NewYork***
+```{r}
+drop_var <- which(colSums(is.na(NewYork)) == nrow(NewYork))
+NY <- NewYork[, -drop_var]
+```
+
+```{r}
+ 
+NewYork <- NY %>%
+  select("X_PSU", "X_LLCPWT", "X_STSTR", 
+         #Arthritis
+         "X_DRDXAR2", 
+         #gender, age, education
+         "SEXVAR", "X_AGE_G",  "X_EDUCAG", 
+         #chronic conditions or risk associated with chronic conditions
+         "DIABETE4", "CVDCRHD4", "X_RFBMI5", "EXERANY2", "X_RFSMOK3", "ASTHMA3", "CVDSTRK3", "EXERANY2") %>%
+  mutate(
+         Gender = as.factor(dplyr::recode(SEXVAR, "1" = "M" ,
+                                                  "2" = "F", .default = NULL, .missing = NULL)),
+         Age = as.factor(dplyr::recode(X_AGE_G, "1" = "18-44" , 
+                                                "2" = "18-44", 
+                                                "3" = "18-44" , 
+                                                "4" = "45-64", 
+                                                "5" = "45-64",
+                                                "6" = "65 and older", .default = NULL, .missing = NULL)),
+         Education = as.factor(dplyr::recode(X_EDUCAG, "1" = "Less than High School Education" , 
+                                                "2" = "High School Education", 
+                                                "3" = "More than High School Education" , 
+                                                "4" = "More than High School Education", 
+                                                .default = NULL, .missing = NULL)),
+         Arthritis = as.factor(dplyr::recode(X_DRDXAR2, "1" = "Yes" ,
+                                                        "2" = "No", 
+                                                        .default = NULL, .missing = NULL)),
+         Diabetes = as.factor(dplyr::recode(DIABETE4, "1" = "Yes" , 
+                                                "2" = "Yes", 
+                                                "3" = "No" , 
+                                                "4" = "No", 
+                                                .default = NULL, .missing = NULL)),
+         HeartDisease = as.factor(dplyr::recode(CVDCRHD4, "1" = "Yes" ,
+                                                           "2" = "No", 
+                                                           .default = NULL, .missing = NULL)),
+         Obese = as.factor(dplyr::recode(X_RFBMI5, "1" = "No" ,
+                                                   "2" = "Yes", 
+                                                             .default = NULL, .missing = NULL)),
+         Inactive = as.factor(dplyr::recode(EXERANY2, "1" = "No" ,
+                                                      "2" = "Yes", 
+                                                      .default = NULL, .missing = NULL)),
+         Asthma = as.factor(dplyr::recode(ASTHMA3, "1" = "Yes" ,
+                                                   "2" = "No", .default = NULL, .missing = NULL)),
+         Smoking = as.factor(dplyr::recode(X_RFSMOK3, "1" = "No" ,
+                                                      "2" = "Yes", .default = NULL, .missing = NULL))
+           )
+
+```
+```{r}
+NewYork_Arthritis <- NewYork %>%
+  select("X_PSU", "X_LLCPWT", "X_STSTR", "Gender", "Age", "Education", "Arthritis", "Diabetes", "HeartDisease", "Obese", "Inactive", "Smoking") 
+NewYork_Arthritis <- na.omit(NewYork_Arthritis)  
+```
+
+
+```{r}
+#Creating Survey Design Object
+NewYork_design <- srvyr::as_survey_design(.data = NewYork_Arthritis , ids = "X_PSU", strata = "X_STSTR", weights = "X_LLCPWT")
+
+```
+
+```{R}
+#functions for prevalnce estimate
+
+prevelance_Estimate_Gender <- function(y) {
+y <- enquo(y)
+NewYork_design %>%
+  group_by(Gender, !!y) %>%
+  dplyr::summarize(proportion = survey_mean(vartype=c("se", "ci"))) %>% #proportion
+  filter(!!y == "Yes") %>%
+  cbind(
+NewYork %>%
+  dplyr::count(vars = !!y, by = Gender) %>% #unweighted count
+  filter(vars == "Yes")
+)
+}
+prevelance_Estimate_Age <- function(y) {
+y <- enquo(y)
+NewYork_design %>%
+  group_by(Age, !!y) %>%
+  dplyr::summarize(proportion = survey_mean(vartype=c("se", "ci"))) %>% #proportion
+  filter(!!y == "Yes") %>%
+  cbind(
+NewYork %>%
+  dplyr::count(vars = !!y, by = Age) %>% #unweighted count
+  filter(vars == "Yes")
+)
+}
+
+```
+
+
+```{r}
+#According to data from the 2020 New York Behavioral Risk Factor Surveillance System (BRFSS),
+# an estimated 2,658,119 people or 21.6 percent of population had been told by a health care professional they had arthritis
+prop <- svymean(~Arthritis, NewYork_design, na.rm=TRUE)
+count <- svytotal(~Arthritis, NewYork_design, na.rm=TRUE)
+Arthritis <- cbind(percentage= prop*100, count)
+Arthritis
+
+#Visualization
+ar <- svytable(~Arthritis, design=NewYork_design) %>%
+  prop.table() %>%
+  multiply_by(100) %>%
+  round(digits=1) %>%
+  as.data.frame()
+
+ar <- ddply(ar, "Arthritis",
+                   transform, 
+                   label_ypos=cumsum(Freq) - 0.5*Freq)
+p <- ggplot(ar, 
+            aes(x = Arthritis, y = Freq, fill = c("#7aa457", "#cb6751" ))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Have Arthritis", 
+       caption = "Prevelance of Arthritis") +
+  ggtitle("Prevelance of Arthritis") +
+  scale_fill_manual(labels = c("No", 
+                               "Yes"), 
+                    values=c("#cb6751", 
+                             "#7aa457" )) +
+  geom_text(aes(y=label_ypos, label= paste0(Freq, "%")), 
+            color="black", size=3.5)
+  
+p
+
+
+```
+
+```{r}
+#Association between gender and having arthritis
+
+# H0: Having Arthritis And Gender are independent; no association between variables exists.
+# H1: Having Arthritis And Gender are not independent; association between variables exists and are dependent.
+# significance level <- 0.5
+
+summary(svytable(~Arthritis + Gender , NewYork_design))
+#P-value ≤ α: The variables “Having Arthritis And Gender” have a statistically significant association (Reject H0)
+
+AR <- prevelance_Estimate_Gender(Arthritis)
+AR
+#Women in New York are diagnosed with arthritis at higher rates than men
+#with 25.28 percent of all women having been diagnosed compared to 17.9 percent of all men
+
+bys <- svyby(~Arthritis, ~Gender, svymean, design=NewYork_design, keep.names=TRUE)
+
+bys <- bys %>%
+  select(Gender, ArthritisYes) %>%
+  mutate(Arthritis = ArthritisYes*100) 
+
+bys <- ddply(bys, "Gender",
+                   transform, 
+                   label_ypos=cumsum(Arthritis) - 0.5*Arthritis)
+  
+p <- ggplot(bys, 
+            aes(x = Gender, y = Arthritis, fill = c("#b6caa2","#7aa457" ))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Gender", 
+       caption = "Prevelance of Arthritis by Gender") +
+  ggtitle("Prevelance of Arthritis by Gender") +
+  scale_fill_manual(labels = c("M", 
+                               "F"), 
+                    values=c("#b6caa2" , "#7aa457")) +
+  geom_text(aes(y=label_ypos, label= paste0(round(Arthritis, digits = 1),"%")), 
+            color="black", size=3.5)
+  
+p
+
+```
+```{r}
+#Association between Age and having arthritis
+
+# H0: Having Arthritis And Age are independent; no association between variables exists.
+# H1: Having Arthritis And Age are not independent; association between variables exists and are dependent.
+# significance level <- 0.5
+
+summary(svytable(~Arthritis + Age , NewYork_design))
+#P-value ≤ α: The variables “Having Arthritis And Age” have a statistically significant association (Reject H0)
+
+AR <- prevelance_Estimate_Age(Arthritis)
+AR
+#The prevalence of arthritis increased with age.
+#Only 6.31 percent of adults between the ages of 18 and 44 had arthritis, 
+#compared to 25.63 percent of adults between the ages of 45 and 64, 
+# and 45.44 percent of adults age 65 and older. 
+
+bys <- svyby(~Arthritis, ~Age, svymean, design=NewYork_design, keep.names=TRUE)
+
+bys <- bys %>%
+  select(Age, ArthritisYes) %>%
+  mutate(Arthritis = ArthritisYes*100) 
+
+bys <- ddply(bys, "Age",
+                   transform, 
+                   label_ypos=cumsum(Arthritis) - 0.5*Arthritis)
+  
+p <- ggplot(bys, 
+            aes(x = Age, y = Arthritis, fill = c( "#7aa457", "#87ad67","#b6caa2"))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Gender", 
+       caption = "Prevelance of Arthritis by Age") +
+  ggtitle("Prevelance of Arthritis by Age") +
+  scale_fill_manual(labels = c("18-44", 
+                               "45-64", "65 and older"), 
+                    values=c("#b6caa2", "#87ad67", "#7aa457"  )) +
+  geom_text(aes(y=label_ypos, label=paste0(round(Arthritis, digits = 1),"%")), 
+            color="black", size=3.5)
+  
+p
+
+```
+#Logistic Regression
+```{r}
+#the effect of "chronic conditions or risk factors for chronic conditions" on the risk of "having Arthritis"
+ 
+# significance level : 0.05
+
+#function for calculating OddRatio
+#first survey generalized linear model for variable of interest
+## or <- svyglm(Arthritis~ Diabetes, family = quasibinomial, design = NewYork_design)
+#then odd ratio function: to convert from log odds to odd ratio, to store argument as conition or risk factor
+or_fun  <-  function(y) {
+or_table  <-  exp(cbind(OR = coef(or), confint(or)))[2, ]
+or_table$condition_riskfactor <- c(y)
+unlist(or_table)
+as.data.frame(or_table)
+}
+
+
+or <- svyglm(Arthritis~ Diabetes, family = quasibinomial, design = NewYork_design)
+a <- or_fun("Diabetes")
+or <- svyglm(Arthritis~ HeartDisease, family = quasibinomial, design = NewYork_design)
+b <- or_fun("HeartDisease")
+or <- svyglm(Arthritis~ Obese, family = quasibinomial, design = NewYork_design)
+c <- or_fun("Obese")
+or <- svyglm(Arthritis~ Inactive, family = quasibinomial, design = NewYork_design)
+d <- or_fun("Inactive")
+or <- svyglm(Arthritis~ Smoking, family = quasibinomial, design = NewYork_design)
+e <- or_fun("Smoke")
+
+#to bind odd ratios in a table
+OddRatios  <-  bind_rows(a, b, c, d, e)
+OddRatios  <-  as.data.frame(OddRatios)
+OddRatios %>%
+  select("condition_riskfactor", "OR", "X2.5..", "X97.5..") %>%
+  dplyr::rename(OR_lower = X2.5.. , OR_upper = X97.5.. )
+
+#The diabetic group has a 3.12 times the odds of the non-diabetic group of having Arthritis 
+#The heart disease group has a 5.34 times the odds of the non-heart disease group of having Arthritis
+#The Obese group has a 1.77 times the odds of the non-obese group of having Arthritis
+#The Inactive group has a 1.88 times the odds of the active group of having Arthritis
+#The Smoking group has a 1.34 times the odds of the non-smoking group of having Arthritis
+
+
+```
+
+                                           ***Prevelence Estimate for Asthma in NewYork***
+```{r}
+NewYork_Asthma <- NewYork %>%
+  select("X_PSU", "X_LLCPWT", "X_STSTR", "Gender", "Age", "Asthma", "Smoking") 
+NewYork_Asthma <- na.omit(NewYork_Asthma)  
+```
+
+
+```{r}
+#Creating Survey Design Object
+NewYork_design <- srvyr::as_survey_design(.data = NewYork_Asthma , ids = "X_PSU", strata = "X_STSTR", weights = "X_LLCPWT")
+
+```
+
+```{r}
+#According to data from the 2020 New York Behavioral Risk Factor Surveillance System (BRFSS),
+# an estimated  1,967,061 people or 14 percent of population had been told by a health care professional they had Asthma
+prop <- svymean(~Asthma, NewYork_design, na.rm=TRUE)
+count <- svytotal(~Asthma, NewYork_design, na.rm=TRUE)
+Asthma <- cbind(percentage= prop*100, count)
+Asthma
+
+#Visualization
+as <- svytable(~Asthma, design=NewYork_design) %>%
+  prop.table() %>%
+  multiply_by(100) %>%
+  round(digits=1) %>%
+  as.data.frame()
+
+as <- ddply(as, "Asthma",
+                   transform, 
+                   label_ypos=cumsum(Freq) - 0.5*Freq)
+p <- ggplot(as, 
+            aes(x = Asthma, y = Freq, fill = c("#7aa457", "#cb6751" ))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Have Asthma", 
+       caption = "Prevelance of Asthma") +
+  ggtitle("Prevelance of Asthma") +
+  scale_fill_manual(labels = c("No", 
+                               "Yes"), 
+                    values=c("#cb6751", 
+                             "#7aa457" )) +
+  geom_text(aes(y=label_ypos, label= paste0(Freq, "%")), 
+            color="black", size=3.5)
+  
+p
+
+
+```
+```{r}
+#Association between gender and having Asthma
+
+# H0: Having Asthma And Gender are independent; no association between variables exists.
+# H1: Having Asthma And Gender are not independent; association between variables exists and are dependent.
+# significance level <- 0.5
+
+summary(svytable(~Asthma + Gender , NewYork_design))
+#P-value ≤ α: The variables “Having Asthma And Gender” have a statistically significant association (Reject H0)
+
+AS_G <- prevelance_Estimate_Gender(Asthma)
+AS_G
+#Women in New York are diagnosed with Asthma at higher rates than men
+#with 15.4 percent of all women having been diagnosed compared to 12.3 percent of all men
+
+bys <- svyby(~Asthma, ~Gender, svymean, design=NewYork_design, keep.names=TRUE)
+
+bys <- bys %>%
+  select(Gender, AsthmaYes) %>%
+  mutate(Asthma = AsthmaYes*100) 
+
+bys <- ddply(bys, "Gender",
+                   transform, 
+                   label_ypos=cumsum(Asthma) - 0.5*Asthma)
+  
+p <- ggplot(bys, 
+            aes(x = Gender, y = Asthma, fill = c("#b6caa2","#7aa457" ))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Gender", 
+       caption = "Prevelance of Asthma by Gender") +
+  ggtitle("Prevelance of Asthma by Gender") +
+  scale_fill_manual(labels = c("M", 
+                               "F"), 
+                    values=c("#b6caa2" , "#7aa457")) +
+  geom_text(aes(y=label_ypos, label= paste0(round(Asthma, digits = 1),"%")), 
+            color="black", size=3.5)
+  
+p
+
+
+```
+
+```{r}
+#Association between Age and having Asthma
+
+# H0: Having Asthma And Age are independent; no association between variables exists.
+# H1: Having Asthma And Age are not independent; association between variables exists and are dependent.
+# significance level <- 0.5
+
+summary(svytable(~Asthma + Age , NewYork_design))
+#P-value ≤ α: The variables “Having Arthritis And Age” have a statistically significant association (Reject H0)
+
+
+AS_A <- prevelance_Estimate_Age(Asthma)
+AS_A
+#The prevalence of arthritis increased with age.
+#Only 15.4 percent of adults between the ages of 18 and 44 had arthritis, 
+#compared to 13.4 percent of adults between the ages of 45 and 64, 
+# and 11.7 percent of adults age 65 and older. 
+
+
+#visualization
+bys <- svyby(~Asthma, ~Age, svymean, design=NewYork_design, keep.names=TRUE)
+
+bys <- bys %>%
+  select(Age, AsthmaYes) %>%
+  mutate(Asthma = AsthmaYes*100) 
+
+bys <- ddply(bys, "Age",
+                   transform, 
+                   label_ypos=cumsum(Asthma) - 0.5*Asthma)
+  
+p <- ggplot(bys, 
+            aes(x = Age, y = Asthma, fill = c( "#7aa457", "#87ad67","#b6caa2"))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Gender", 
+       caption = "Prevelance of Asthma by Age") +
+  ggtitle("Prevelance of Asthma by Age") +
+  scale_fill_manual(labels = c("18-44", 
+                               "45-64", "65 and older"), 
+                    values=c("#7aa457" , "#87ad67","#b6caa2" )) +
+  geom_text(aes(y=label_ypos, label=paste0(round(Asthma, digits = 1),"%")), 
+            color="black", size=3.5)
+  
+p
+```
+
+```{r}
+#the effect of "Smoking" on the risk of "having Asthma"
+ 
+# significance level : 0.05
+
+#function for calculation OddRatio
+#first survey design for variable of interest
+## or <- svyglm(Asthma~ Smoking, family = quasibinomial, design = NewYork_design)
+#then odd ratio function 
+or_fun  <-  function(y) {
+or_table  <-  exp(cbind(OR = coef(or), confint(or)))[2, ]
+or_table$condition_riskfactor <- c(y)
+unlist(or_table)
+as.data.frame(or_table)
+}
+
+OddRatio <- svyglm(Asthma~ Smoking, family = quasibinomial, design = NewYork_design)
+summary(OddRatio)
+
+exp(cbind(OR = coef(OddRatio), confint(OddRatio)))
+
+or <- svyglm(Asthma~ Smoking, family = quasibinomial, design = NewYork_design)
+a <- or_fun("Smoke")
+
+#to bind odd ratios in a table
+#OddRatios  <-  bind_rows(a, b, c, d, e)
+OddRatios  <-  as.data.frame(a)
+OddRatios %>%
+  select("condition_riskfactor", "OR", "X2.5..", "X97.5..") %>%
+  dplyr::rename(OR_lower = X2.5.. , OR_upper = X97.5.. )
+
+#The smoking group has 50% (1.50 – 1 = 0.50) more odds of having asthma than the non-smoking group.
+
+```
+
+                                 ***Prevelence Estimate for Stroke in NewYork***
+```{r}
+NewYork_Stroke <- NewYork %>%
+  select("X_PSU", "X_LLCPWT", "X_STSTR", "Gender", "Age", "Education", "Diabetes", "HeartDisease", "Obese", "Inactive", "Smoking") 
+NewYork_Stroke <- na.omit(NewYork_Stroke)  
+```
+
+
+```{r}
+#Creating Survey Design Object
+NewYork_design <- srvyr::as_survey_design(.data = NewYork_Stroke , ids = "X_PSU", strata = "X_STSTR", weights = "X_LLCPWT")
+
+```
+
+```{r}
+#According to data from the 2020 New York Behavioral Risk Factor Surveillance System (BRFSS),
+# an estimated 472,462 people or 3.8 percent of population had been told by a health care professional they had CVD Stroke
+
+
+prop <- svymean(~HeartDisease, NewYork_design, na.rm=TRUE)
+
+count <-svytotal(~HeartDisease, NewYork_design, na.rm=TRUE)
+stroke <- cbind(percentage= prop*100, count)
+stroke
+
+#Visualization
+as <- svytable(~HeartDisease, design=NewYork_design) %>%
+  prop.table() %>%
+  multiply_by(100) %>%
+  round(digits=1) %>%
+  as.data.frame()
+
+as <- ddply(as, "HeartDisease",
+                   transform, 
+                   label_ypos=cumsum(Freq) - 0.5*Freq)
+p <- ggplot(as, 
+            aes(x = HeartDisease, y = Freq, fill = c("#7aa457", "#cb6751" ))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Have Stroke", 
+       caption = "Prevelance of Stroke") +
+  ggtitle("Prevelance of Stroke") +
+  scale_fill_manual(labels = c("No", 
+                               "Yes"), 
+                    values=c("#cb6751", 
+                             "#7aa457" )) +
+  geom_text(aes(y=label_ypos, label= paste0(Freq, "%")), 
+            color="black", size=3.5)
+  
+p
+```
+```{r}
+#Association between gender and having CVD stroke
+
+# H0: Having Asthma And Gender are independent; no association between variables exists.
+# H1: Having Asthma And Gender are not independent; association between variables exists and are dependent.
+# significance level <- 0.05
+
+summary(svytable(~HeartDisease + Gender , NewYork_design))
+#P-value > α: The variables “Having Asthma And Gender” have statistically significant association (reject H0)
+
+
+HD_G <- prevelance_Estimate_Gender(HeartDisease)
+HD_G
+#men in New York are diagnosed with Stroke at higher rates than women
+#with 4.7 percent of all men having been diagnosed compared to 3 percent of all women
+
+#The prevalence of CVD stroke in all male and female is nearly equal
+
+bys <- svyby(~HeartDisease, ~Gender, svymean, design=NewYork_design, keep.names=TRUE)
+
+bys <- bys %>%
+  select(Gender, HeartDiseaseYes) %>%
+  mutate(stroke = HeartDiseaseYes*100) 
+
+bys <- ddply(bys, "Gender",
+                   transform, 
+                   label_ypos=cumsum(stroke) - 0.5*stroke)
+  
+p <- ggplot(bys, 
+            aes(x = Gender, y = stroke, fill = c("#b6caa2","#7aa457" ))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Gender", 
+       caption = "Prevelance of Stroke by Gender") +
+  ggtitle("Prevelance of Stroke by Gender") +
+  scale_fill_manual(labels = c("M", 
+                               "F"), 
+                    values=c("#b6caa2" , "#7aa457")) +
+  geom_text(aes(y=label_ypos, label= paste0(round(stroke, digits = 1),"%")), 
+            color="black", size=3.5)
+  
+p
+
+
+```
+```{r}
+#Association between Age and having Stroke
+
+# H0: Having Stroke And Age are independent; no association between variables exists.
+# H1: Having Stroke And Age are not independent; association between variables exists and are dependent.
+# significance level <- 0.5
+
+summary(svytable(~HeartDisease + Age , NewYork_design))
+#P-value ≤ α: The variables “Having Stroke And Age” have a statistically significant association (Reject H0)
+
+HD_A <- prevelance_Estimate_Age(HeartDisease)
+HD_A
+#The prevalence of CVD stroke increased with age.
+#Only 0.6  percent of adults between the ages of 18 and 44 had Heart disease 
+#compared to 3.5 percent of adults between the ages of 45 and 64, 
+# and 10.5 percent of adults age 65 and older. 
+
+
+#visualization
+bys <- svyby(~HeartDisease, ~Age, svymean, design=NewYork_design, keep.names=TRUE)
+
+bys <- bys %>%
+  select(Age, HeartDiseaseYes) %>%
+  mutate(stroke = HeartDiseaseYes*100) 
+
+bys <- ddply(bys, "Age",
+                   transform, 
+                   label_ypos=cumsum(stroke) - 0.5*stroke)
+  
+p <- ggplot(bys, 
+            aes(x = Age, y = stroke, fill = c("#7aa457" , "#87ad67","#b6caa2" ))) + 
+  geom_bar(stat="identity", 
+           position = position_stack(reverse = TRUE)) + 
+  coord_flip() + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5, 
+                                  size = 16), 
+        plot.caption = element_text(hjust = 1,
+                                    face = "italic", size=8),
+        axis.title.x = element_text(size=10), 
+        axis.title.y = element_blank(),
+        axis.text.y = element_text(size=10, 
+                                   color = "black")) + 
+  ylab("Percent") + 
+  labs(fill="Gender", 
+       caption = "Prevelance of Stroke by Age") +
+  ggtitle("Prevelance of Stroke by Age") +
+  scale_fill_manual(labels = c("18-44", 
+                               "45-64", "65 and older"), 
+                    values=c("#b6caa2" , "#87ad67", "#7aa457")) +
+  geom_text(aes(y=label_ypos, label=paste0(round(stroke, digits = 1),"%")), 
+            color="black", size=3.5)
+  
+p
+
+```
+```{r}
+#the effect of "chronic conditions" on the risk of "having Stroke"
+ 
+# significance level : 0.05
+
+#function for calculation OddRatio
+#first survey design for variable of interest
+## or <- svyglm(Arthritis~ Diabetes, family = quasibinomial, design = NewYork_design)
+#then odd ratio function 
+or_fun  <-  function(y) {
+or_table  <-  exp(cbind(OR = coef(or), confint(or)))[2, ]
+or_table$condition_riskfactor <- c(y)
+unlist(or_table)
+as.data.frame(or_table)
+}
+
+OddRatio <- svyglm(HeartDisease~Obese, family = quasibinomial, design = NewYork_design)
+summary(OddRatio)
+
+confint(OddRatio)
+exp(coef(OddRatio))
+exp(cbind(OR = coef(OddRatio), confint(OddRatio)))
+
+or <- svyglm(HeartDisease ~ Diabetes, family = quasibinomial, design = NewYork_design)
+a <- or_fun("Diabetes")
+or <- svyglm(HeartDisease ~ Obese, family = quasibinomial, design = NewYork_design)
+b <- or_fun("Obese")
+or <- svyglm(HeartDisease ~ Inactive, family = quasibinomial, design = NewYork_design)
+c <- or_fun("Inactive")
+or <- svyglm(HeartDisease ~ Smoking, family = quasibinomial, design = NewYork_design)
+d <- or_fun("Smoke")
+
+#to bind odd ratios in a table
+OddRatios  <-  bind_rows(a, b, c, d)
+OddRatios  <-  as.data.frame(OddRatios)
+OddRatios %>%
+  select("condition_riskfactor", "OR", "X2.5..", "X97.5..") %>%
+  dplyr::rename(OR_lower = X2.5.. , OR_upper = X97.5.. )
+
+#The diabetic group has  5.1 times the odds of the non-diabetic group of having a Stroke 
+#The Obese group has  1.9 times the odds of the non-obese group of having a stroke
+#The Inactive group has  1.9 times the odds of the active group of having a stroke
+#The Smoking group has 1.1 times the odds of the non-smoking group of having a stroke
+```
